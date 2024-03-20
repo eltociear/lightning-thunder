@@ -341,20 +341,6 @@ def _cudnn_sdpa_checker(
     return True and is_backward_supported
 
 
-@langctx("torch")
-def _cudnn_sdpa_backward_checker(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: TensorLike | None = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: float | None = None,
-) -> bool:
-    return cudnn is not None
-
-
 cudnn_sdpa_fwd = cudnn_ex.register_operator(
     "cudnn_sdpa_fwd",
     meta=_cudnn_sdpa_forward_meta,
@@ -482,7 +468,7 @@ def cudnn_sdpa_backward_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy):
+) -> tuple[TensorProxy, ...]:
     grad_query = TensorProxy(like=query)
     grad_key = TensorProxy(like=key)
     grad_value = TensorProxy(like=value)
@@ -508,7 +494,7 @@ def cudnn_sdpa_bwd_impl(
     philox_offset: torch.Tensor,
     *,
     scale: None | float = None,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+) -> tuple[torch.Tensor, ...]:
     query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
 
     (
