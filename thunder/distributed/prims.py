@@ -314,6 +314,18 @@ def synchronize_augmented_forward_rule(
 def synchronize_backward_rule(
     ddp_type: DDPType, group: torch.distributed.ProcessGroup, grad: TensorProxy
 ) -> tuple[TensorProxy, None]:
+    from thunder.distributed import get_skip_data_parallel_grad_sync
+
+    if get_skip_data_parallel_grad_sync():
+        match ddp_type:
+            case DDPType.REPLICATED:
+                return grad, None
+            case DDPType.FULLY_SHARDED:
+                # note(crcrpar): I find it handy to deliberately put `BoundSymbol`s of reduce-scatter to tell which bsyms are producing unsharded gradients in an fsdp backward trace
+                return reduce_scatter(grad, DistributedReduceOps.SUM, group, do_async=True).wait(), None
+            case _:
+                utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
+
     preaverage_grad = grad / group.size()
     match ddp_type:
         case DDPType.REPLICATED:
