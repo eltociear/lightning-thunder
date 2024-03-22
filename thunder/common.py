@@ -509,14 +509,6 @@ def trace(
             trace.args, trace.kwargs = proxyargs, proxykwargs
 
             if insert_ddp_syncs:
-                from thunder.core import utils
-                from thunder.distributed import get_skip_data_parallel_grad_sync
-
-                no_sync = get_skip_data_parallel_grad_sync()
-                utils.check(
-                    not (no_sync and getattr(compile_data, "use_fsdp", False)),
-                    lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
-                )
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
                     if isinstance(arg, TensorProxy) and arg.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
@@ -524,8 +516,7 @@ def trace(
                     else:
                         return arg
 
-                if not no_sync:
-                    proxyargs, proxykwargs = tree_map(ddp_sync, (proxyargs, proxykwargs))
+                proxyargs, proxykwargs = tree_map(ddp_sync, (proxyargs, proxykwargs))
 
             result = fn(*proxyargs, **proxykwargs)
 
@@ -682,10 +673,10 @@ def _create_callable(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()

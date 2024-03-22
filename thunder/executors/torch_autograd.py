@@ -43,10 +43,11 @@ class ThunderFunction(torch.autograd.Function):
         return split_forward_backward_compat
 
     @staticmethod
-    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(ctx, return_none_as_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
         # Here we just propagate the tensors through the autograd graph
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
+        ctx.return_none_as_grads = return_none_as_grads
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
@@ -75,7 +76,11 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
-        return (None, None, None, None, *grads)
+        return (
+            (None, None, None, None, None, *grads)
+            if not ctx.return_none_as_grads
+            else (None, None, None, None, None, *([None] * len(grads)))
+        )
 
 
 # TODO: RC1 Remove this
@@ -238,9 +243,19 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     # autograd.Function.backward expects a flat tuple of gradients
     bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
 
+    utils.check(
+        len(tree_flatten((computation_trc.args, computation_trc.kwargs))[0])
+        == len(tree_flatten((fw_trace.args, fw_trace.kwargs))[0]),
+        lambda: f"{len(tree_flatten((computation_trc.args, computation_trc.kwargs))[0])}, {len(tree_flatten((fw_trace.args, fw_trace.kwargs))[0])}",
+    )
+    utils.check(
+        len(tree_flatten((computation_trc.args, computation_trc.kwargs))[0]) == len(tree_flatten(bw_trace.output)[0]),
+        lambda: f"{len(tree_flatten((computation_trc.args, computation_trc.kwargs))[0])}, {len(tree_flatten(bw_trace.output)[0])}",
+    )
+
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
-        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
         fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
         _fsdp_comm_bucketing.update_name_set(bw_trace)
 

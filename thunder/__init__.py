@@ -205,11 +205,16 @@ class ThunderModule(pytorch.nn.Module):
 
         .. note::
 
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
+            [ddp] This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
             PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
             Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
             In contrast, this synchronizes accumulated gradients when exiting, leading to
             :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+
+        .. note::
+
+            [fsdp] This sets and accumulates unsharded, unsynchronized gradients to ``param._thunder_fsdp_unsharded_grad`` until exiting this context.
+            When exiting, :func:`~thunder.distributed._sync_grad_fsdp` collects and synchronize those attributes before setting the outputs as ``param.grad``.
 
         .. warning::
 
@@ -289,6 +294,7 @@ CacheEntry = namedtuple(
         "epilogue_traces",
         "backward_fn",
         "backward_traces",
+        "return_none_as_grads",
     ],
 )
 
@@ -393,14 +399,15 @@ def jit(
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
+        return_none_as_grads = no_grad_sync and is_fsdp_enabled
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -417,6 +424,7 @@ def jit(
                     epilogue_traces,
                     backward_fn,
                     backward_traces,
+                    _return_none_as_grads,
                 ) = cache_entry
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
@@ -584,7 +592,15 @@ def jit(
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro,
+                protraces,
+                comp,
+                extraces,
+                epilogue,
+                epilogue_traces,
+                backward_fn,
+                backward_traces,
+                return_none_as_grads=return_none_as_grads,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -619,6 +635,7 @@ def jit(
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
+                cache_entry.return_none_as_grads,
                 cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
