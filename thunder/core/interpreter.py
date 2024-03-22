@@ -2599,7 +2599,8 @@ def _collections_namedtuple_lookaside(
     *,
     rename: bool = False,
     defaults: None | Iterable[Any] = None,
-    module: None | str = None):
+    module: None | str = None,
+):
     # Type checks {
     assert wrapped_isinstance(typename, str)
     assert wrapped_isinstance(field_names, Iterable)
@@ -2623,7 +2624,7 @@ def _collections_namedtuple_lookaside(
 
     # Run opaque namedtuple {
     @interpreter_needs_wrap
-    def create_namedtuple(typename: str, field_names: str,  **kwargs):
+    def create_namedtuple(typename: str, field_names: str, **kwargs):
         namedtuple_type = collections.namedtuple(typename, field_names, **kwargs)
         return namedtuple_type
 
@@ -2722,7 +2723,7 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
     try:
         ures = tuple(w.value for w in item_wrappers)
         # Named tuples expect varargs, not iterables at new/init
-        if hasattr(new_tuple_type, 'is_namedtuple'):
+        if hasattr(new_tuple_type, "is_namedtuple"):
             ures = new_tuple_type(*ures)
             build_inst = PseudoInst.BUILD_NAMEDTUPLE
         else:
