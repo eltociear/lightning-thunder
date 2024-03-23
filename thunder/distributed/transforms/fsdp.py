@@ -17,6 +17,7 @@ from thunder.core.proxies import FutureTensorProxy
 from thunder.core.pytree import tree_flatten
 from thunder.core.pytree import tree_unflatten
 from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx
 from thunder.core.trace import VariableInterface
 from thunder.core.trace import from_trace
 from thunder.core.transforms import VISIT_TYPE
@@ -39,7 +40,6 @@ from thunder.executors.torchex import wait_prim_impl
 if TYPE_CHECKING:
     from collections.abc import Callable
     from thunder import CompileData
-    from thunder.core.trace import TraceCtx
     from thunder.distributed.bucketing import Bucket
 
 
