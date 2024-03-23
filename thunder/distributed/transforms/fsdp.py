@@ -37,6 +37,7 @@ from thunder.executors.torchex import unpack_for_fsdp_prim_impl
 from thunder.executors.torchex import wait_prim_impl
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from thunder import CompileData
     from thunder.core.trace import TraceCtx
     from thunder.distributed.bucketing import Bucket
@@ -446,7 +447,7 @@ class FSDPCommBucketing:
     def __init__(
         self,
         compile_data: CompileData,
-        computation_trc: TraceCtx,
+        computation_trc: TraceCtx | Callable,
     ) -> None:
         self.compile_data = compile_data
         utils.check(
@@ -462,26 +463,34 @@ class FSDPCommBucketing:
 
         self.requires_bwd_bucketing_allgather = compile_data.fn.sharding_strategy == FSDPType.ZERO3
         self.computation_trc = computation_trc
-        self.computation_trc_flat_args, self._computation_trc_flat_args_spec = tree_flatten(
-            (self.computation_trc.args, self.computation_trc.kwargs)
-        )
-        rev_fqn_to_proxy_name: dict[str, str] = {}
-        fqn: str
-        for fqn, _ in compile_data.fn.named_parameters():
-            proxy_name = fqn.replace(".", "_")
-            rev_fqn_to_proxy_name[proxy_name] = fqn
+        if not isinstance(self.computation_trc, TraceCtx):
+            import warnings
 
-        orig_proxy_name_to_fqn: dict[str, str] = {}
-        for proxy_name in tuple(
-            p.name for p in filter(lambda p: isinstance(p, TensorProxy), self.computation_trc_flat_args)
-        ):
-            if proxy_name in rev_fqn_to_proxy_name:
-                orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[proxy_name]
-            elif proxy_name.startswith("t_"):
-                tmp_name = proxy_name[2:]
-                if tmp_name in rev_fqn_to_proxy_name:
-                    orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[tmp_name]
-        self.proxy_name_to_fqn = orig_proxy_name_to_fqn
+            warnings.warn("`computation_trc` is not `TraceCtx`")
+            self.computation_trc_flat_args = []
+            self.computation_trc_flat_args_spec = None
+            self.proxy_name_to_fqn = {}
+        else:
+            self.computation_trc_flat_args, self._computation_trc_flat_args_spec = tree_flatten(
+                (self.computation_trc.args, self.computation_trc.kwargs)
+            )
+            rev_fqn_to_proxy_name: dict[str, str] = {}
+            fqn: str
+            for fqn, _ in compile_data.fn.named_parameters():
+                proxy_name = fqn.replace(".", "_")
+                rev_fqn_to_proxy_name[proxy_name] = fqn
+
+            orig_proxy_name_to_fqn: dict[str, str] = {}
+            for proxy_name in tuple(
+                p.name for p in filter(lambda p: isinstance(p, TensorProxy), self.computation_trc_flat_args)
+            ):
+                if proxy_name in rev_fqn_to_proxy_name:
+                    orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[proxy_name]
+                elif proxy_name.startswith("t_"):
+                    tmp_name = proxy_name[2:]
+                    if tmp_name in rev_fqn_to_proxy_name:
+                        orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[tmp_name]
+            self.proxy_name_to_fqn = orig_proxy_name_to_fqn
 
     def update_name_set(self, backward_trace: TraceCtx) -> TraceCtx:
         if not self.apply_bucketing:
